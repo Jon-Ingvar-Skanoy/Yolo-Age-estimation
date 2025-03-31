@@ -6,7 +6,7 @@ from PIL import Image, ImageDraw
 import torchvision.transforms as transforms
 
 # Import your updated dataloader
-from test import FacialAgeDataset, get_age_prediction_dataloaders
+from dataset import FacialAgeDataset, get_age_prediction_dataloaders
 
 def visualize_detected_faces(root_dir='data/faces', output_dir='face_detection_results'):
     """
