@@ -1,1 +1,4 @@
 data/*
+yolo_format/*
+transformed_faces/*
+face_detection_results/*

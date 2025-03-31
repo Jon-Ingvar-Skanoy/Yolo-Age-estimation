@@ -6,7 +6,7 @@ import numpy as np
 from PIL import Image
 import torchvision.transforms as transforms
 import re
-
+import time
 class FacialAgeDataset(Dataset):
     def __init__(self, root_dir, fold_files, transform=None, detect_faces=True):
         """
@@ -407,15 +407,13 @@ if __name__ == "__main__":
     print(f"Validation dataset size: {len(val_loader.dataset)}")
     
     # Check a batch
+    start_time = time.time()
     for images, targets, original_info, paths in train_loader:
-        print(f"Batch image shape: {images.shape}")
-        print(f"Number of targets in first image: {len(targets[0])}")
-        print(f"First target in first image: {targets[0][0]}")
+       
         
         # Print face detection results for first image
         if original_info[0].get('face_coords'):
-            print(f"Detected face coordinates: {original_info[0]['face_coords']}")
-        else:
-            print("No face detected, using default bounding box")
-        
-        break
+            a = 2
+       
+    end_time = time.time()
+    print("time passed", end_time - start_time)    
