@@ -1,8 +1,12 @@
 import argparse
 import os
-from ultralytics import YOLO
-import yaml
 import torch
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from ultralytics import YOLO
+from sklearn.metrics import confusion_matrix
+import yaml
 from datetime import datetime
 
 def train_yolov8(
@@ -18,17 +22,6 @@ def train_yolov8(
 ):
     """
     Train a YOLOv8 model on a custom dataset.
-    
-    Args:
-        data_yaml: Path to the data.yaml file
-        model_size: YOLOv8 model size (n, s, m, l, x)
-        img_size: Input image size
-        batch_size: Batch size for training
-        epochs: Number of epochs to train
-        workers: Number of worker threads for data loading
-        device: Device to train on ('cpu', '0', '0,1', etc.)
-        output_dir: Directory to save training results
-        pretrained: Whether to use pretrained weights
     """
     # Load the dataset configuration
     with open(data_yaml, 'r') as f:
@@ -72,17 +65,35 @@ def train_yolov8(
     
     return model, results
 
-def validate_model(model, data_yaml, img_size=640, batch_size=16, device='0'):
+def validate_model_with_confusion_matrix(model, data_yaml, img_size=640, batch_size=16, device='0'):
     """
-    Validate a trained YOLOv8 model on the validation set.
+    Validate a trained YOLOv8 model and generate a confusion matrix.
+    """
+    # Load class names
+    with open(data_yaml, 'r') as f:
+        data_config = yaml.safe_load(f)
+        
+    class_names = []
+    # Replace your class names loading code with this
+    class_names = []
+    if 'names' in data_config:
+        # If names is a dictionary
+        if isinstance(data_config['names'], dict):
+            num_classes = data_config.get('nc', len(data_config['names']))
+            class_names = [""] * num_classes
+            
+            for key, value in data_config['names'].items():
+                # Convert key to int if it's a string that represents an integer
+                idx = key  # This works with integer keys directly
+                if isinstance(key, str) and key.isdigit():
+                    idx = int(key)
+                    
+                if isinstance(idx, int) and 0 <= idx < num_classes:
+                    class_names[idx] = value
+        # If names is a list
+        elif isinstance(data_config['names'], list):
+            class_names = data_config['names']
     
-    Args:
-        model: Trained YOLO model
-        data_yaml: Path to the data.yaml file
-        img_size: Input image size
-        batch_size: Batch size for validation
-        device: Device to validate on
-    """
     # Run validation
     results = model.val(
         data=data_yaml,
@@ -92,12 +103,70 @@ def validate_model(model, data_yaml, img_size=640, batch_size=16, device='0'):
         verbose=True
     )
     
-    # Print validation results
+    # Print validation results safely
     print("\nValidation Results:")
-    print(f"mAP50-95: {results.box.map:.4f}")
-    print(f"mAP50: {results.box.map50:.4f}")
-    print(f"Precision: {results.box.p:.4f}")
-    print(f"Recall: {results.box.r:.4f}")
+    try:
+        map50_95 = float(results.box.map)
+        map50 = float(results.box.map50)
+        precision = float(results.box.p)
+        recall = float(results.box.r)
+        
+        print(f"mAP50-95: {map50_95:.4f}")
+        print(f"mAP50: {map50:.4f}")
+        print(f"Precision: {precision:.4f}")
+        print(f"Recall: {recall:.4f}")
+    except Exception as e:
+        print(f"Could not print detailed metrics: {e}")
+        print("Basic results:", results)
+    
+    # Generate confusion matrix
+    try:
+        # Get predictions and ground truth
+        conf_matrix = results.confusion_matrix.matrix
+        
+        # Normalize to get percentages
+        conf_matrix_norm = conf_matrix / (conf_matrix.sum(axis=1, keepdims=True) + 1e-6)
+        
+        # Plot confusion matrix
+        plt.figure(figsize=(12, 10))
+        sns.heatmap(
+            conf_matrix_norm, 
+            annot=True, 
+            fmt='.2f', 
+            cmap='Blues',
+            xticklabels=class_names,
+            yticklabels=class_names
+        )
+        plt.xlabel('Predicted')
+        plt.ylabel('True')
+        plt.title('Confusion Matrix (Normalized)')
+        
+        # Save the confusion matrix
+        cm_path = os.path.join(os.path.dirname(results.save_dir), 'confusion_matrix.png')
+        plt.tight_layout()
+        plt.savefig(cm_path)
+        plt.close()
+        
+        print(f"Confusion matrix saved to {cm_path}")
+    except Exception as e:
+        print(f"Failed to generate confusion matrix: {e}")
+        
+        # Alternative approach if the built-in confusion matrix isn't available
+        print("Attempting alternative confusion matrix calculation...")
+        try:
+            # Get all predictions and ground truths
+            y_true = []
+            y_pred = []
+            
+            # Run inference on validation set to get predictions
+            val_folder = os.path.join(os.path.dirname(data_yaml), data_config['val'])
+            
+            # This approach requires manually iterating through the validation dataset
+            # and collecting predictions, which is beyond the scope of this fix
+            
+            print("Manual confusion matrix calculation requires additional implementation.")
+        except Exception as e2:
+            print(f"Alternative confusion matrix calculation failed: {e2}")
     
     return results
 
@@ -111,7 +180,7 @@ if __name__ == "__main__":
                         help='Input image size (default: 640)')
     parser.add_argument('--batch-size', type=int, default=16,
                         help='Batch size for training (default: 16)')
-    parser.add_argument('--epochs', type=int, default=100,
+    parser.add_argument('--epochs', type=int, default=1,
                         help='Number of epochs to train (default: 100)')
     parser.add_argument('--workers', type=int, default=4,
                         help='Number of worker threads for data loading (default: 4)')
@@ -142,8 +211,8 @@ if __name__ == "__main__":
         pretrained=not args.no_pretrained
     )
     
-    # Validate model
-    validate_model(
+    # Validate model with confusion matrix
+    validate_model_with_confusion_matrix(
         model=model,
         data_yaml=args.data,
         img_size=args.img_size,
