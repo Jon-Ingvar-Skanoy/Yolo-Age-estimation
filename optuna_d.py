@@ -67,7 +67,7 @@ def run_optuna_tuning(
     model_size='n',
     output_dir='runs/tune_optuna',
     n_trials=40,
-    epochs_per_trial=10,
+    epochs_per_trial=50,
     device='0'
 ):
     """
@@ -94,7 +94,7 @@ def run_optuna_tuning(
     model_path = f'yolov8{model_size}.pt'
     
     # Create and configure the study
-    study = optuna.create_study(direction='maximize', study_name="model size" + model_size, storage="sqlite:///YOLO.db")
+    study = optuna.create_study(direction='maximize', study_name="model size" + model_size, storage="sqlite:///YOLO.db", load_if_exists=True)
     
     # Run the optimization
     print(f"Starting Optuna hyperparameter tuning with {n_trials} trials")
@@ -171,7 +171,7 @@ if __name__ == "__main__":
                         help='YOLOv8 model size (n, s, m, l, x) (default: n)')
     parser.add_argument('--n-trials', type=int, default=40,
                         help='Number of Optuna trials (default: 40)')
-    parser.add_argument('--epochs-per-trial', type=int, default=10,
+    parser.add_argument('--epochs-per-trial', type=int, default=40,
                         help='Number of epochs to train in each trial (default: 10)')
     parser.add_argument('--device', type=str, default='0',
                         help='Device to run on (cpu, 0, 0,1, etc.) (default: 0)')
