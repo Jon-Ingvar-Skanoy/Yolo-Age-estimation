@@ -82,6 +82,8 @@ def train_model(data_yaml, model_size, best_params, run_id, epochs=100, device='
     # Add imgsz if not in best_params
     if 'imgsz' not in training_params:
         training_params['imgsz'] = 416
+
+    training_params['optimizer'] = "AdamW"
     
     # Train with the best parameters
     print(f"\nRun {run_id}: Starting training for {epochs} epochs...")
@@ -402,6 +404,7 @@ def run_multiple_trainings(
             device=device,
             project=project,
             base_name=base_name
+        
         )
         
         # Get the path to the best weights
