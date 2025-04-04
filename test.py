@@ -274,13 +274,13 @@ def example_usage():
     train_dataset = YOLODataset(
         img_dir="yolo_dataset/train/images",
         label_dir="yolo_dataset/train/labels",
-        img_size=640
+        img_size=416
     )
     
     val_dataset = YOLODataset(
         img_dir="yolo_dataset/val/images",
         label_dir="yolo_dataset/val/labels",
-        img_size=640
+        img_size=416
     )
     
     # 3. Train the model with PyTorch

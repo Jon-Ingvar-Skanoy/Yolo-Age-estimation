@@ -30,6 +30,7 @@ def objective(trial, model_path, data_yaml, epochs=10, device='0'):
         'fliplr': trial.suggest_float('fliplr', 0.0, 0.5),
         'batch': trial.suggest_categorical('batch', [8, 16, 32]),
         'imgsz': 416,
+        'optimizer': 'AdamW',
     }
     
     # Create a new model instance for each trial to avoid state leakage
@@ -94,7 +95,7 @@ def run_optuna_tuning(
     model_path = f'yolov8{model_size}.pt'
     
     # Create and configure the study
-    study = optuna.create_study(direction='maximize', study_name="model size" + model_size, storage="sqlite:///YOLO.db", load_if_exists=True)
+    study = optuna.create_study(direction='maximize', study_name="model size " + model_size, storage="sqlite:///YOLO.db", load_if_exists=True)
     
     # Run the optimization
     print(f"Starting Optuna hyperparameter tuning with {n_trials} trials")
