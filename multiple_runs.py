@@ -101,6 +101,7 @@ def train_model(data_yaml, model_size, best_params, run_id, epochs=100, device='
     
     # Add the random seed to the training parameters
     training_params['seed'] = random_seed
+    training_params['optimizer'] = "AdamW"
     
     # Train with the best parameters
     print(f"\nRun {run_id}: Starting training for {epochs} epochs...")
