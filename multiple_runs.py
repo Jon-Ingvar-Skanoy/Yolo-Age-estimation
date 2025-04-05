@@ -4,6 +4,7 @@ import json
 import yaml
 import torch
 import numpy as np
+import random
 from tqdm import tqdm
 from ultralytics import YOLO
 from datetime import datetime
@@ -62,6 +63,21 @@ def train_model(data_yaml, model_size, best_params, run_id, epochs=100, device='
         results: Training results
         run_dir: Directory where results are saved
     """
+    # Set different random seeds for each run to ensure stochasticity
+    random_seed = random.randint(0, 10000)  # Generate a random seed for this run
+    print(f"Run {run_id}: Using random seed {random_seed}")
+    
+    # Set seeds for different libraries
+    random.seed(random_seed)
+    np.random.seed(random_seed)
+    torch.manual_seed(random_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(random_seed)
+        torch.cuda.manual_seed_all(random_seed)
+        # Disable deterministic operations for better performance and true randomness
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = True
+    
     # Create a timestamp-based name if not provided
     if base_name is None:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -82,10 +98,9 @@ def train_model(data_yaml, model_size, best_params, run_id, epochs=100, device='
     # Add imgsz if not in best_params
     if 'imgsz' not in training_params:
         training_params['imgsz'] = 416
-
-    training_params['optimizer'] = "AdamW"
-
     
+    # Add the random seed to the training parameters
+    training_params['seed'] = random_seed
     
     # Train with the best parameters
     print(f"\nRun {run_id}: Starting training for {epochs} epochs...")
@@ -406,7 +421,6 @@ def run_multiple_trainings(
             device=device,
             project=project,
             base_name=base_name
-        
         )
         
         # Get the path to the best weights
@@ -471,9 +485,16 @@ def run_multiple_trainings(
         })
         avg_metrics_df.to_csv(os.path.join(aggregate_dir, 'average_metrics.csv'), index=False)
         
+        # Print individual values for key metrics to verify stochasticity
+        print("\nIndividual run values for key metrics:")
+        for metric in ['accuracy', 'metrics/precision(B)', 'metrics/recall(B)', 'metrics/mAP50(B)', 'metrics/mAP50-95(B)']:
+            if metric in metrics_df.columns:
+                values = metrics_df[metric].tolist()
+                print(f"  {metric}: {values}")
+        
         # Also save in a more readable format
         summary_path = os.path.join(aggregate_dir, 'summary.txt')
-        with open(summary_path, 'w') as f:
+        with open(summary_path, 'w', encoding='utf-8') as f:
             f.write(f"Multiple Training Runs Summary\n")
             f.write(f"============================\n\n")
             f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -482,12 +503,12 @@ def run_multiple_trainings(
             f.write(f"Number of runs: {num_runs}\n")
             f.write(f"Epochs per run: {epochs}\n\n")
             
-            f.write(f"Average Metrics (mean ± std):\n")
+            f.write(f"Average Metrics (mean +/- std):\n")
             for index, row in avg_metrics_df.iterrows():
                 metric = row['metric']
                 mean = row['mean']
                 std = row['std']
-                f.write(f"  {metric}: {mean:.4f} ± {std:.4f}\n")
+                f.write(f"  {metric}: {mean:.4f} +/- {std:.4f}\n")
             
             f.write("\nIndividual Run Results:\n")
             for run_id in range(1, num_runs + 1):
@@ -499,17 +520,29 @@ def run_multiple_trainings(
                             value = run_metrics[column].values[0]
                             if isinstance(value, (int, float)):
                                 f.write(f"  {column}: {value:.4f}\n")
+                    
+                    # Include the random seed used for this run
+                    run_dir = os.path.join(project, f"{base_name}_run{run_id}")
+                    seed_file = os.path.join(run_dir, 'args.yaml')
+                    if os.path.exists(seed_file):
+                        try:
+                            with open(seed_file, 'r') as sf:
+                                args = yaml.safe_load(sf)
+                                if 'seed' in args:
+                                    f.write(f"  random_seed: {args['seed']}\n")
+                        except Exception as e:
+                            f.write(f"  Error reading seed: {e}\n")
         
         # Print summary
         print(f"\n{'='*80}")
         print(f"Average Results Across {num_runs} Runs:")
         print(f"{'='*80}")
-        print(f"  Accuracy: {mean_metrics['accuracy']:.4f} ± {std_metrics['accuracy']:.4f}")
+        print(f"  Accuracy: {mean_metrics['accuracy']:.4f} +/- {std_metrics['accuracy']:.4f}")
         print("  YOLO Metrics:")
         for metric in mean_metrics.index:
             if metric.startswith('metrics/'):
                 metric_name = metric.replace('metrics/', '')
-                print(f"    {metric_name}: {mean_metrics[metric]:.4f} ± {std_metrics[metric]:.4f}")
+                print(f"    {metric_name}: {mean_metrics[metric]:.4f} +/- {std_metrics[metric]:.4f}")
         
         print(f"\nDetailed results saved to {aggregate_dir}")
     else:
