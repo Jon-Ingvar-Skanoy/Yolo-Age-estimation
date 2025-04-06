@@ -95,13 +95,16 @@ def train_model(data_yaml, model_size, best_params, run_id, epochs=100, device='
     
     # Add fixed parameters that might not be in the study
     training_params = best_params.copy()
+    
     # Add imgsz if not in best_params
     if 'imgsz' not in training_params:
         training_params['imgsz'] = 416
     
+    # Explicitly set optimizer to AdamW
+    training_params['optimizer'] = 'AdamW'
+    
     # Add the random seed to the training parameters
     training_params['seed'] = random_seed
-    training_params['optimizer'] = "AdamW"
     
     # Train with the best parameters
     print(f"\nRun {run_id}: Starting training for {epochs} epochs...")
@@ -424,10 +427,10 @@ def run_multiple_trainings(
             base_name=base_name
         )
         
-        # Get the path to the best weights
-        weights_path = os.path.join(run_dir, 'weights', 'best.pt')
+        # Get the path to the LAST weights (instead of best)
+        weights_path = os.path.join(run_dir, 'weights', 'last.pt')
         if not os.path.exists(weights_path):
-            print(f"Warning: Best weights not found at {weights_path}")
+            print(f"Warning: Last weights not found at {weights_path}")
             continue
         
         # Load the trained model for evaluation
@@ -459,7 +462,7 @@ def run_multiple_trainings(
         shutil.copy(accuracy_results_path, os.path.join(aggregate_dir, f'accuracy_results_run{run_id}.json'))
         
         # Print metrics summary for this run
-        print(f"\nRun {run_id} Results:")
+        print(f"\nRun {run_id} Results (using last.pt weights):")
         print(f"  Accuracy: {accuracy:.4f} ({accuracy_results['correct_predictions']}/{accuracy_results['total_images']})")
         print("  YOLO Metrics:")
         for key, value in yolo_metrics.items():
@@ -496,13 +499,14 @@ def run_multiple_trainings(
         # Also save in a more readable format
         summary_path = os.path.join(aggregate_dir, 'summary.txt')
         with open(summary_path, 'w', encoding='utf-8') as f:
-            f.write(f"Multiple Training Runs Summary\n")
-            f.write(f"============================\n\n")
+            f.write(f"Multiple Training Runs Summary (Using last.pt weights)\n")
+            f.write(f"=================================================\n\n")
             f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"Dataset: {data_yaml}\n")
             f.write(f"Model: yolov8{model_size}.pt\n")
             f.write(f"Number of runs: {num_runs}\n")
-            f.write(f"Epochs per run: {epochs}\n\n")
+            f.write(f"Epochs per run: {epochs}\n")
+            f.write(f"Optimizer: AdamW\n\n")
             
             f.write(f"Average Metrics (mean +/- std):\n")
             for index, row in avg_metrics_df.iterrows():
@@ -536,7 +540,7 @@ def run_multiple_trainings(
         
         # Print summary
         print(f"\n{'='*80}")
-        print(f"Average Results Across {num_runs} Runs:")
+        print(f"Average Results Across {num_runs} Runs (Using last.pt weights):")
         print(f"{'='*80}")
         print(f"  Accuracy: {mean_metrics['accuracy']:.4f} +/- {std_metrics['accuracy']:.4f}")
         print("  YOLO Metrics:")
