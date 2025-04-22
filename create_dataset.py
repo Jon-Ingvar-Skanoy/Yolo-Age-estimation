@@ -25,7 +25,7 @@ FOLD_FILES = [
 
 # Age categories as defined in your original code
 AGE_CATEGORIES = [
-    (0, 2), (4, 6), (8, 13), (15, 20), (25, 32), 
+    (0, 2), (4, 6), (8, 12), (15, 20), (25, 32), 
     (38, 43), 
     (48, 53), (60, 100)
 ]
