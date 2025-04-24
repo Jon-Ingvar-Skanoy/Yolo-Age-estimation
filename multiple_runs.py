@@ -12,6 +12,9 @@ import optuna
 from pathlib import Path
 import shutil
 import pandas as pd
+import time
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 
 def get_best_params(study_path=None, study_name=None, db_path=None):
@@ -62,7 +65,11 @@ def train_model(data_yaml, model_size, best_params, run_id, epochs=100, device='
     Returns:
         results: Training results
         run_dir: Directory where results are saved
+        training_time: Training time in seconds
     """
+    # Start the timer
+    start_time = time.time()
+    
     # Set different random seeds for each run to ensure stochasticity
     random_seed = random.randint(0, 10000)  # Generate a random seed for this run
     print(f"Run {run_id}: Using random seed {random_seed}")
@@ -105,6 +112,8 @@ def train_model(data_yaml, model_size, best_params, run_id, epochs=100, device='
     
     # Add the random seed to the training parameters
     training_params['seed'] = random_seed
+
+    training_params['val'] = False
     
     # Train with the best parameters
     print(f"\nRun {run_id}: Starting training for {epochs} epochs...")
@@ -115,13 +124,26 @@ def train_model(data_yaml, model_size, best_params, run_id, epochs=100, device='
         project=project,
         name=name,
         exist_ok=True,
+        verbose=False,
         **training_params
     )
     
-    run_dir = os.path.join(project, name)
-    print(f"Run {run_id}: Training completed. Results saved to {run_dir}")
+    # Calculate training time
+    end_time = time.time()
+    training_time = end_time - start_time
+    training_hours = training_time / 3600.0
     
-    return results, run_dir
+    run_dir = os.path.join(project, name)
+    print(f"Run {run_id}: Training completed in {training_hours:.2f} hours. Results saved to {run_dir}")
+    
+    # Save the training time to a file
+    time_file = os.path.join(run_dir, 'training_time.txt')
+    with open(time_file, 'w') as f:
+        f.write(f"Training Time: {training_time:.2f} seconds ({training_hours:.2f} hours)\n")
+        f.write(f"Run ID: {run_id}\n")
+        f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    
+    return results, run_dir, training_time
 
 
 def calculate_accuracy(model, data_yaml, conf_threshold=0.25):
@@ -281,6 +303,286 @@ def calculate_accuracy(model, data_yaml, conf_threshold=0.25):
     return accuracy, results_dict
 
 
+def generate_confusion_matrix(model, data_yaml, conf_threshold=0.25, output_dir=None):
+    """
+    Generate confusion matrix for YOLO model using the most confident detection per image.
+    
+    Args:
+        model: YOLO model
+        data_yaml: Path to data.yaml file
+        conf_threshold: Confidence threshold for predictions
+        output_dir: Directory to save outputs (if None, matrices are only returned)
+    
+    Returns:
+        raw_cm: Raw confusion matrix with counts
+        norm_cm: Normalized confusion matrix (by row)
+        results_dict: Dictionary with detailed results
+    """
+    # Start timing
+    start_time = time.time()
+    
+    # Load dataset information
+    with open(data_yaml, 'r') as f:
+        data_config = yaml.safe_load(f)
+    
+    # Get the class names and number of classes
+    class_names = data_config['names']
+    num_classes = len(class_names)
+    
+    # Get validation dataset path
+    val_path = data_config.get('val')
+    if not val_path:
+        raise ValueError("Validation set path not found in data.yaml")
+    
+    # If val_path is relative, make it absolute based on the data.yaml location
+    data_dir = os.path.dirname(os.path.abspath(data_yaml))
+    if not os.path.isabs(val_path):
+        val_path = os.path.join(data_dir, val_path)
+    
+    # Get all image files
+    image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']
+    image_files = []
+    
+    # Handle if val_path is a file with paths
+    if os.path.isfile(val_path) and val_path.endswith('.txt'):
+        with open(val_path, 'r') as f:
+            for line in f:
+                img_path = line.strip()
+                # Convert relative paths to absolute if needed
+                if not os.path.isabs(img_path):
+                    img_path = os.path.join(data_dir, img_path)
+                if os.path.exists(img_path):
+                    image_files.append(img_path)
+    # Handle if val_path is a directory
+    elif os.path.isdir(val_path):
+        for root, _, files in os.walk(val_path):
+            for file in files:
+                if any(file.lower().endswith(ext) for ext in image_extensions):
+                    image_files.append(os.path.join(root, file))
+    else:
+        raise ValueError(f"Invalid validation path: {val_path}")
+    
+    if not image_files:
+        raise ValueError(f"No images found in validation set path: {val_path}")
+    
+    print(f"Found {len(image_files)} images in the validation set")
+    
+    # Initialize confusion matrix (rows: ground truth, columns: predictions)
+    # Add an extra class for "no detection"
+    confusion_matrix = np.zeros((num_classes, num_classes + 1), dtype=int)
+    
+    # Results dictionary for detailed information
+    results_dict = {
+        "per_image": [],
+        "confusion_matrix": None,
+        "class_names": class_names,
+    }
+    
+    # Process each image
+    for img_path in tqdm(image_files, desc="Generating confusion matrix"):
+        # Get corresponding label file
+        label_path = get_label_path(img_path)
+        
+        if not os.path.exists(label_path):
+            print(f"Warning: No label file found for {img_path}")
+            continue
+        
+        # Read ground truth labels
+        ground_truth_classes = []
+        with open(label_path, 'r') as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) >= 5:  # class_id x y w h
+                    class_id = int(float(parts[0]))
+                    ground_truth_classes.append(class_id)
+        
+        if not ground_truth_classes:
+            print(f"Warning: No valid labels in {label_path}")
+            continue
+        
+        # Run inference
+        results = model(img_path, conf=conf_threshold)[0]
+        
+        # Get predictions
+        predictions = results.boxes.data.cpu().numpy()
+        
+        # For each ground truth class in the image
+        for gt_class in ground_truth_classes:
+            if gt_class >= num_classes:
+                print(f"Warning: Ground truth class {gt_class} is out of range in {label_path}")
+                continue
+                
+            # Check if there are any predictions
+            if len(predictions) > 0:
+                # Sort by confidence (descending)
+                predictions = predictions[predictions[:, 4].argsort()[::-1]]
+                
+                # Get the most confident prediction
+                most_confident_pred = predictions[0]
+                pred_class_id = int(most_confident_pred[5])
+                confidence = float(most_confident_pred[4])
+                
+                # Update confusion matrix
+                confusion_matrix[gt_class, pred_class_id] += 1
+                
+                # Store per-image results
+                results_dict["per_image"].append({
+                    "image_path": img_path,
+                    "ground_truth": gt_class,
+                    "prediction": pred_class_id,
+                    "confidence": confidence,
+                    "correct": pred_class_id == gt_class
+                })
+            else:
+                # No detection (represented by the last column)
+                confusion_matrix[gt_class, -1] += 1
+                
+                # Store per-image results
+                results_dict["per_image"].append({
+                    "image_path": img_path,
+                    "ground_truth": gt_class,
+                    "prediction": "none",
+                    "confidence": 0.0,
+                    "correct": False
+                })
+    
+    # Calculate processing time
+    end_time = time.time()
+    processing_time = end_time - start_time
+    
+    # Store raw confusion matrix in results
+    results_dict["confusion_matrix"] = confusion_matrix.tolist()
+    results_dict["processing_time"] = processing_time
+    
+    # Calculate normalized confusion matrix (by row/ground truth)
+    row_sums = confusion_matrix.sum(axis=1, keepdims=True)
+    norm_confusion_matrix = np.zeros_like(confusion_matrix, dtype=float)
+    for i in range(num_classes):
+        if row_sums[i] > 0:
+            norm_confusion_matrix[i] = confusion_matrix[i] / row_sums[i]
+    
+    # Save outputs if directory is provided
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Convert class_names to a list if it's a dictionary
+        if isinstance(class_names, dict):
+            # If class_names is a dictionary, convert it to a list
+            max_id = max(class_names.keys())
+            class_names_list = [class_names.get(i, f"unknown_{i}") for i in range(max_id + 1)]
+        else:
+            # If class_names is already a list
+            class_names_list = class_names
+        
+        # Create class labels for output
+        class_labels = class_names_list.copy()
+        header_labels = class_names_list + ['no_detection']
+        
+        # Save raw numbers to CSV
+        raw_cm_path = os.path.join(output_dir, 'confusion_matrix_raw.csv')
+        with open(raw_cm_path, 'w') as f:
+            # Write header
+            f.write(',' + ','.join(header_labels) + '\n')
+            
+            # Write each row
+            for i, class_label in enumerate(class_labels):
+                if i < confusion_matrix.shape[0]:  # Make sure we don't go out of bounds
+                    row = [class_label] + [str(x) for x in confusion_matrix[i]]
+                    f.write(','.join(row) + '\n')
+        
+        # Save normalized matrix to CSV
+        norm_cm_path = os.path.join(output_dir, 'confusion_matrix_normalized.csv')
+        with open(norm_cm_path, 'w') as f:
+            # Write header
+            f.write(',' + ','.join(header_labels) + '\n')
+            
+            # Write each row
+            for i, class_label in enumerate(class_labels):
+                if i < norm_confusion_matrix.shape[0]:  # Make sure we don't go out of bounds
+                    row = [class_label] + [f"{x:.4f}" for x in norm_confusion_matrix[i]]
+                    f.write(','.join(row) + '\n')
+        
+        # Save detailed results to JSON
+        results_path = os.path.join(output_dir, 'confusion_matrix_results.json')
+        with open(results_path, 'w') as f:
+            json.dump(results_dict, f, indent=4)
+        
+        # Create and save visualizations
+        plot_confusion_matrix(
+            confusion_matrix, 
+            header_labels,
+            os.path.join(output_dir, 'confusion_matrix_raw.png'),
+            title='Confusion Matrix (Raw Counts)',
+            normalize=False
+        )
+        
+        plot_confusion_matrix(
+            norm_confusion_matrix, 
+            header_labels,
+            os.path.join(output_dir, 'confusion_matrix_normalized.png'),
+            title='Confusion Matrix (Normalized by Row)',
+            normalize=True
+        )
+        
+        # Save processing time information
+        time_path = os.path.join(output_dir, 'processing_time.txt')
+        with open(time_path, 'w') as f:
+            f.write(f"Confusion Matrix Generation Time: {processing_time:.2f} seconds\n")
+            f.write(f"Images Processed: {len(image_files)}\n")
+            f.write(f"Average Time Per Image: {processing_time/len(image_files):.4f} seconds\n")
+            f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        
+        print(f"Confusion matrix results saved to {output_dir}")
+        print(f"Processing time: {processing_time:.2f} seconds")
+    
+    return confusion_matrix, norm_confusion_matrix, results_dict
+
+
+def plot_confusion_matrix(cm, class_names, output_path, title='Confusion Matrix', normalize=False, figsize=(12, 10)):
+    """
+    Plot confusion matrix as a heatmap.
+    
+    Args:
+        cm: Confusion matrix
+        class_names: List of class names
+        output_path: Path to save the figure
+        title: Title for the plot
+        normalize: Whether the matrix is already normalized
+        figsize: Figure size (width, height)
+    """
+    plt.figure(figsize=figsize)
+    
+    # Use a different colormap for normalized vs raw
+    cmap = 'Blues' if normalize else 'Blues'
+    
+    # Create heatmap
+    sns.heatmap(
+        cm, 
+        annot=True, 
+        fmt='.2f' if normalize else 'd', 
+        cmap=cmap,
+        xticklabels=class_names,
+        yticklabels=class_names,
+        cbar=True
+    )
+    
+    # Set labels and title
+    plt.ylabel('Ground Truth')
+    plt.xlabel('Prediction')
+    plt.title(title)
+    
+    # Rotate tick labels if there are many classes
+    if len(class_names) > 10:
+        plt.xticks(rotation=45, ha='right')
+    
+    # Tight layout to ensure everything fits
+    plt.tight_layout()
+    
+    # Save figure
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+
 def get_label_path(img_path):
     """
     Convert image path to label path for YOLO format datasets.
@@ -371,6 +673,9 @@ def run_multiple_trainings(
         project: Directory to save training results
         conf_threshold: Confidence threshold for accuracy calculation
     """
+    # Overall start time
+    overall_start_time = time.time()
+    
     # Load dataset information
     with open(data_yaml, 'r') as f:
         data_config = yaml.safe_load(f)
@@ -408,6 +713,7 @@ def run_multiple_trainings(
     # Track metrics across runs
     all_metrics = []
     all_accuracies = []
+    training_times = []
     
     # Run multiple training iterations
     for run_id in range(1, num_runs + 1):
@@ -416,7 +722,7 @@ def run_multiple_trainings(
         print(f"{'='*80}")
         
         # Train model with best parameters
-        results, run_dir = train_model(
+        results, run_dir, training_time = train_model(
             data_yaml=data_yaml,
             model_size=model_size,
             best_params=best_params,
@@ -426,6 +732,9 @@ def run_multiple_trainings(
             project=project,
             base_name=base_name
         )
+        
+        # Add training time to list
+        training_times.append(training_time)
         
         # Get the path to the LAST weights (instead of best)
         weights_path = os.path.join(run_dir, 'weights', 'last.pt')
@@ -441,6 +750,23 @@ def run_multiple_trainings(
         print(f"Run {run_id}: Calculating accuracy metrics")
         accuracy, accuracy_results = calculate_accuracy(trained_model, data_yaml, conf_threshold)
         
+        # Generate confusion matrix
+        print(f"Run {run_id}: Generating confusion matrix")
+        cm_dir = os.path.join(run_dir, 'confusion_matrix')
+        raw_cm, norm_cm, cm_results = generate_confusion_matrix(
+            trained_model, 
+            data_yaml, 
+            conf_threshold=conf_threshold,
+            output_dir=cm_dir
+        )
+        
+        # Also make a copy of the confusion matrix visualizations in the aggregate directory
+        for file_name in ['confusion_matrix_raw.png', 'confusion_matrix_normalized.png']:
+            src = os.path.join(cm_dir, file_name)
+            if os.path.exists(src):
+                dst = os.path.join(aggregate_dir, f'{file_name.split(".")[0]}_run{run_id}.png')
+                shutil.copy(src, dst)
+        
         # Read standard YOLO metrics from results.csv
         yolo_metrics = read_metrics_from_run(run_dir)
         
@@ -448,6 +774,7 @@ def run_multiple_trainings(
         combined_metrics = {
             'run_id': run_id,
             'accuracy': accuracy,
+            'training_time': training_time,
             **yolo_metrics
         }
         all_metrics.append(combined_metrics)
@@ -463,6 +790,7 @@ def run_multiple_trainings(
         
         # Print metrics summary for this run
         print(f"\nRun {run_id} Results (using last.pt weights):")
+        print(f"  Training Time: {training_time:.2f} seconds ({training_time/3600:.2f} hours)")
         print(f"  Accuracy: {accuracy:.4f} ({accuracy_results['correct_predictions']}/{accuracy_results['total_images']})")
         print("  YOLO Metrics:")
         for key, value in yolo_metrics.items():
@@ -489,8 +817,25 @@ def run_multiple_trainings(
         })
         avg_metrics_df.to_csv(os.path.join(aggregate_dir, 'average_metrics.csv'), index=False)
         
+        # Calculate and save average training time
+        avg_training_time = sum(training_times) / len(training_times)
+        avg_training_hours = avg_training_time / 3600.0
+        std_training_time = np.std(training_times)
+        
+        # Save training time statistics
+        time_stats_path = os.path.join(aggregate_dir, 'training_time_stats.txt')
+        with open(time_stats_path, 'w') as f:
+            f.write(f"Training Time Statistics\n")
+            f.write(f"======================\n\n")
+            f.write(f"Average Training Time: {avg_training_time:.2f} seconds ({avg_training_hours:.2f} hours)\n")
+            f.write(f"Standard Deviation: {std_training_time:.2f} seconds\n\n")
+            f.write(f"Individual Run Times:\n")
+            for i, time_val in enumerate(training_times):
+                f.write(f"  Run {i+1}: {time_val:.2f} seconds ({time_val/3600:.2f} hours)\n")
+        
         # Print individual values for key metrics to verify stochasticity
         print("\nIndividual run values for key metrics:")
+        print(f"  Training Time (seconds): {training_times}")
         for metric in ['accuracy', 'metrics/precision(B)', 'metrics/recall(B)', 'metrics/mAP50(B)', 'metrics/mAP50-95(B)']:
             if metric in metrics_df.columns:
                 values = metrics_df[metric].tolist()
@@ -508,6 +853,8 @@ def run_multiple_trainings(
             f.write(f"Epochs per run: {epochs}\n")
             f.write(f"Optimizer: AdamW\n\n")
             
+            f.write(f"Average Training Time: {avg_training_time:.2f} seconds ({avg_training_hours:.2f} hours) ± {std_training_time:.2f} seconds\n\n")
+            
             f.write(f"Average Metrics (mean +/- std):\n")
             for index, row in avg_metrics_df.iterrows():
                 metric = row['metric']
@@ -520,8 +867,9 @@ def run_multiple_trainings(
                 run_metrics = metrics_df[metrics_df['run_id'] == run_id]
                 if not run_metrics.empty:
                     f.write(f"\nRun {run_id}:\n")
+                    f.write(f"  Training Time: {training_times[run_id-1]:.2f} seconds ({training_times[run_id-1]/3600:.2f} hours)\n")
                     for column in run_metrics.columns:
-                        if column != 'run_id':
+                        if column != 'run_id' and column != 'training_time':  # Already included above
                             value = run_metrics[column].values[0]
                             if isinstance(value, (int, float)):
                                 f.write(f"  {column}: {value:.4f}\n")
@@ -538,10 +886,17 @@ def run_multiple_trainings(
                         except Exception as e:
                             f.write(f"  Error reading seed: {e}\n")
         
+        # Calculate overall time
+        overall_end_time = time.time()
+        overall_time = overall_end_time - overall_start_time
+        overall_hours = overall_time / 3600.0
+        
         # Print summary
         print(f"\n{'='*80}")
         print(f"Average Results Across {num_runs} Runs (Using last.pt weights):")
         print(f"{'='*80}")
+        print(f"  Total Execution Time: {overall_time:.2f} seconds ({overall_hours:.2f} hours)")
+        print(f"  Average Training Time: {avg_training_time:.2f} seconds ({avg_training_hours:.2f} hours) ± {std_training_time:.2f} seconds")
         print(f"  Accuracy: {mean_metrics['accuracy']:.4f} +/- {std_metrics['accuracy']:.4f}")
         print("  YOLO Metrics:")
         for metric in mean_metrics.index:
@@ -549,10 +904,38 @@ def run_multiple_trainings(
                 metric_name = metric.replace('metrics/', '')
                 print(f"    {metric_name}: {mean_metrics[metric]:.4f} +/- {std_metrics[metric]:.4f}")
         
+        # Generate confusion matrix for the final model (the last trained model)
+        print(f"\nGenerating final confusion matrix for the last model")
+        final_model_path = os.path.join(project, f"{base_name}_run{num_runs}", "weights", "last.pt")
+        if os.path.exists(final_model_path):
+            final_model = YOLO(final_model_path)
+            final_cm_dir = os.path.join(aggregate_dir, "final_confusion_matrix")
+            raw_cm, norm_cm, cm_results = generate_confusion_matrix(
+                final_model,
+                data_yaml,
+                conf_threshold=conf_threshold,
+                output_dir=final_cm_dir
+            )
+            print(f"Final confusion matrix saved to {final_cm_dir}")
+        else:
+            print(f"Warning: Could not find final model at {final_model_path}")
+        
         print(f"\nDetailed results saved to {aggregate_dir}")
     else:
         print("\nNo valid runs completed.")
-
+        
+    # Save overall execution time
+    overall_end_time = time.time()
+    overall_time = overall_end_time - overall_start_time
+    overall_hours = overall_time / 3600.0
+    
+    time_log_path = os.path.join(aggregate_dir, 'overall_execution_time.txt')
+    with open(time_log_path, 'w') as f:
+        f.write(f"Overall Execution Time: {overall_time:.2f} seconds ({overall_hours:.2f} hours)\n")
+        f.write(f"Start Time: {datetime.fromtimestamp(overall_start_time).strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"End Time: {datetime.fromtimestamp(overall_end_time).strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Number of Runs: {num_runs}\n")
+        f.write(f"Epochs per Run: {epochs}\n")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run multiple YOLOv8 training runs with best parameters')
