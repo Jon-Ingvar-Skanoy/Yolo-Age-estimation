@@ -3,3 +3,5 @@ yolo_format/*
 transformed_faces/*
 face_detection_results/*
 runs/*
+.env
+.pt
