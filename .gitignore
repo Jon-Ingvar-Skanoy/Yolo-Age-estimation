@@ -4,4 +4,4 @@ transformed_faces/*
 face_detection_results/*
 runs/*
 .env
-.pt
+*.pt
