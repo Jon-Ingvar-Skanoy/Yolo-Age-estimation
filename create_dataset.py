@@ -10,11 +10,12 @@ import pandas as pd
 import torchvision.transforms as transforms
 import re
 import cv2
+from facenet_pytorch import MTCNN
 
 # Parameters with default values matching your structure
 BASE_DIR = "data"
 FACES_ARCHIVE = os.path.join(BASE_DIR, "faces.tar.gz")
-OUTPUT_DIR = os.path.join(BASE_DIR, "age_dataset")
+OUTPUT_DIR = os.path.join(BASE_DIR, "age_dataset_test2")
 FOLD_FILES = [
     os.path.join(BASE_DIR, "fold_0_data.txt"),
     os.path.join(BASE_DIR, "fold_1_data.txt"),
@@ -130,8 +131,8 @@ def create_yolo_dataset(
     faces_dir,
     fold_files,
     output_dir,
-    train_folds=[0, 1, 2, 3],
-    val_fold=4,
+    train_folds=[0, 1, 2, 4],
+    val_fold=3,
     img_size=416
 ):
     """
@@ -191,63 +192,34 @@ def create_yolo_dataset(
     create_data_yaml(output_dir, len(AGE_CATEGORIES))
     
     print(f"YOLO dataset created successfully at {output_dir}")
+# Initialize MTCNN for face detection
+mtcnn = MTCNN()
+
 
 def detect_face(image_np):
-    """
-    Detect faces in an image using OpenCV's Haar cascade classifier
-    
+    """pip
+    Detect face using MTCNN. Return bounding box in (x, y, w, h) format.
     Args:
-        image_np: Image as NumPy array (BGR format)
-        
+        image_np: BGR format image as NumPy array
     Returns:
-        Tuple (x, y, w, h) of face or None if no face detected
+        Tuple (x, y, w, h) or None if face not detected
     """
-    # Try to find the Haar cascade file
-    cascade_paths = [
-        # Common paths for haarcascade file
-        'haarcascade_frontalface_default.xml',
-        '/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml',
-        '/usr/local/share/opencv4/haarcascades/haarcascade_frontalface_default.xml',
-        cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-    ]
-
-    cascade_file = None
-    for path in cascade_paths:
-        if os.path.exists(path):
-            cascade_file = path
-            break
+    img_rgb = cv2.cvtColor(image_np, cv2.COLOR_BGR2RGB)
+    img_pil = Image.fromarray(img_rgb)
+    boxes, _ = mtcnn.detect(img_pil)
     
-    if cascade_file is None:
-        print("Warning: Could not find face cascade file. Using fallback bounding box.")
-        return None
-    
-    # Initialize classifier
-    face_cascade = cv2.CascadeClassifier(cascade_file)
-    
-    # Convert to grayscale for face detection
-    if len(image_np.shape) == 3:
-        gray = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
+    if boxes is not None and len(boxes) > 0:
+        # Use first detected face (or choose largest if multiple faces)
+        x1, y1, x2, y2 = boxes[0]
+        w = x2 - x1
+        h = y2 - y1
+        return (x1, y1, w, h)
     else:
-        gray = image_np
-    
-    # Detect faces
-    faces = face_cascade.detectMultiScale(
-        gray,
-        scaleFactor=1.1,
-        minNeighbors=5,
-        minSize=(30, 30)
-    )
-    
-    # If faces found, return the largest one
-    if len(faces) > 0:
-        # Get largest face by area
-        largest_face = max(faces, key=lambda rect: rect[2] * rect[3])
-        return largest_face
-    
-    return None
+        return None
 
 def process_dataset(data, faces_dir, img_dir, label_dir, img_size, transform):
     """Process a dataset and save images and labels in YOLO format"""
+    count = 0
     for idx, row in tqdm(data.iterrows(), total=len(data)):
         try:
             # Get image path
@@ -299,6 +271,8 @@ def process_dataset(data, faces_dir, img_dir, label_dir, img_size, transform):
                     height_norm = h / orig_height
                 else:
                     # Fallback: use a bounding box covering 80% of the image
+             #       print("Warning: No face detected. Using fallback bounding box.")
+                    count += 1
                     x_center, y_center = 0.5, 0.5
                     width_norm, height_norm = 0.8, 0.8
                 
@@ -315,6 +289,8 @@ def process_dataset(data, faces_dir, img_dir, label_dir, img_size, transform):
         
         except Exception as e:
             print(f"Error processing image for index {idx}: {str(e)}")
+    print(f"Processed {len(data)} images.")
+    print(f"Skipped {count} images due to missing faces.")
 
 def create_data_yaml(output_dir, num_classes):
     """Create a data.yaml file for YOLO training"""
@@ -344,9 +320,9 @@ def main():
                         help='Directory to save the YOLO format dataset (default: data/age_dataset)')
     parser.add_argument('--fold-files', type=str, nargs='+', default=FOLD_FILES,
                         help='List of fold data files')
-    parser.add_argument('--train-folds', type=int, nargs='+', default=[0, 1, 2, 3],
+    parser.add_argument('--train-folds', type=int, nargs='+', default=[0, 1, 2, 4],
                         help='Fold numbers to use for training (default: [0, 1, 2, 3])')
-    parser.add_argument('--val-fold', type=int, default=4,
+    parser.add_argument('--val-fold', type=int, default=3,
                         help='Fold number to use for validation (default: 4)')
     parser.add_argument('--img-size', type=int, default=416,
                         help='Size to resize images to (default: 416)')
