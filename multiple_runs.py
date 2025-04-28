@@ -47,7 +47,7 @@ def get_best_params(study_path=None, study_name=None, db_path=None):
     return best_params, best_value
 
 
-def train_model(data_yaml, model_size, best_params, run_id, epochs=100, device='0', 
+def train_model(data_yaml, model_size, model_v, best_params, run_id, epochs=100, device='0', 
                 project='runs/multi_runs', base_name=None):
     """
     Train a YOLO model with the given parameters.
@@ -94,7 +94,7 @@ def train_model(data_yaml, model_size, best_params, run_id, epochs=100, device='
     name = f"{base_name}_run{run_id}"
     
     # Define the model path
-    model_path = f'yolov8{model_size}.pt'
+    model_path = f'yolov{model_v}{model_size}.pt'
     print(f"Run {run_id}: Using model {model_path}")
     
     # Create a new model instance
@@ -108,22 +108,27 @@ def train_model(data_yaml, model_size, best_params, run_id, epochs=100, device='
         training_params['imgsz'] = 416
     
     # Explicitly set optimizer to AdamW
-    training_params['optimizer'] = 'AdamW'
+    training_params['optimizer'] = 'Adam'
     
     # Add the random seed to the training parameters
     training_params['seed'] = random_seed
+    
 
     training_params['val'] = False
+    training_params['deterministic'] = False
+ 
     
     # Train with the best parameters
     print(f"\nRun {run_id}: Starting training for {epochs} epochs...")
     results = model.train(
         data=data_yaml,
         epochs=epochs,
+        cache='disk',
         device=device,
         project=project,
         name=name,
-        exist_ok=True,
+        
+       
         verbose=False,
         **training_params
     )
@@ -146,7 +151,7 @@ def train_model(data_yaml, model_size, best_params, run_id, epochs=100, device='
     return results, run_dir, training_time
 
 
-def calculate_accuracy(model, data_yaml, conf_threshold=0.25):
+def calculate_accuracy(model, data_yaml, conf_threshold=0.1):
     """
     Calculate accuracy score for each image by comparing the most confident
     detected object with the ground truth label.
@@ -236,7 +241,7 @@ def calculate_accuracy(model, data_yaml, conf_threshold=0.25):
             continue
         
         # Run inference
-        results = model(img_path, conf=conf_threshold)[0]
+        results = model(img_path, conf=conf_threshold, verbose= False)[0]
         
         # Get predictions
         predictions = results.boxes.data.cpu().numpy()
@@ -303,7 +308,7 @@ def calculate_accuracy(model, data_yaml, conf_threshold=0.25):
     return accuracy, results_dict
 
 
-def generate_confusion_matrix(model, data_yaml, conf_threshold=0.25, output_dir=None):
+def generate_confusion_matrix(model, data_yaml, conf_threshold=0.1, output_dir=None):
     """
     Generate confusion matrix for YOLO model using the most confident detection per image.
     
@@ -401,7 +406,7 @@ def generate_confusion_matrix(model, data_yaml, conf_threshold=0.25, output_dir=
             continue
         
         # Run inference
-        results = model(img_path, conf=conf_threshold)[0]
+        results = model(img_path, conf=conf_threshold,verbose=False )[0]
         
         # Get predictions
         predictions = results.boxes.data.cpu().numpy()
@@ -653,10 +658,11 @@ def run_multiple_trainings(
     study_name=None,
     db_path=None,
     num_runs=5,
+    model_v = "8",
     epochs=100,
     device='0',
     project='runs/multi_runs',
-    conf_threshold=0.25
+    conf_threshold=0.1
 ):
     """
     Run multiple training runs with the best hyperparameters and calculate average metrics.
@@ -725,6 +731,7 @@ def run_multiple_trainings(
         results, run_dir, training_time = train_model(
             data_yaml=data_yaml,
             model_size=model_size,
+            model_v = model_v,
             best_params=best_params,
             run_id=run_id,
             epochs=epochs,
@@ -943,6 +950,8 @@ if __name__ == "__main__":
                         help='Path to data.yaml file')
     parser.add_argument('--model-size', type=str, default='n', choices=['n', 's', 'm', 'l', 'x'],
                         help='YOLOv8 model size (n, s, m, l, x) (default: n)')
+    parser.add_argument('--model-v', type=str, default='8', choices=['8', '9', '10', '11', '12'],
+                        help='YOLOv8 model size (n, s, m, l, x) (default: n)')
     
     # Optuna study loading options
     study_group = parser.add_mutually_exclusive_group(required=True)
@@ -979,6 +988,7 @@ if __name__ == "__main__":
     run_multiple_trainings(
         data_yaml=args.data,
         model_size=args.model_size,
+        model_v=args.model_v,
         study_path=args.study_path,
         study_name=args.study_name,
         db_path=args.db_path,
