@@ -14,13 +14,13 @@ def objective(trial, model_path, data_yaml, epochs=10, device='0'):
     # Define the hyperparameters to tune
     params = {
         'lr0': trial.suggest_float('lr0', 1e-5, 1e-2, log=True),
-        'lrf': trial.suggest_float('lrf', 0.01, 0.2),
-        'momentum': trial.suggest_float('momentum', 0.8, 0.95),
+        'lrf': trial.suggest_float('lrf', 0.01, 1.0),
+        'momentum': trial.suggest_float('momentum', 0.6, 0.95),
         'weight_decay': trial.suggest_float('weight_decay', 0.0001, 0.001, log=True),
         'warmup_epochs': trial.suggest_int('warmup_epochs', 1, 5),
         'warmup_momentum': trial.suggest_float('warmup_momentum', 0.5, 0.95),
-        'box': trial.suggest_float('box', 3.0, 8.0),
-        'cls': trial.suggest_float('cls', 0.3, 1.0),
+        'box': trial.suggest_float('box', 0.02, 0.2),
+        'cls': trial.suggest_float('cls', 0.2, 4.0),
         'hsv_h': trial.suggest_float('hsv_h', 0.0, 0.1),
         'hsv_s': trial.suggest_float('hsv_s', 0.5, 0.9),
         'hsv_v': trial.suggest_float('hsv_v', 0.5, 0.9),
@@ -29,6 +29,7 @@ def objective(trial, model_path, data_yaml, epochs=10, device='0'):
         'scale': trial.suggest_float('scale', 0.0, 0.5),
         'fliplr': trial.suggest_float('fliplr', 0.0, 0.5),
         'batch': trial.suggest_categorical('batch', [8, 16, 32]),
+        'mosaic': trial.suggest_float('mosaic', 0.0, 1.0),
         'imgsz': 416,
         'optimizer': 'AdamW',
         'val': False
@@ -96,7 +97,7 @@ def run_optuna_tuning(
     model_path = f'yolov8{model_size}.pt'
     
     # Create and configure the study
-    study = optuna.create_study(direction='maximize', study_name="2 model size " + model_size, storage="sqlite:///YOLO.db", load_if_exists=True)
+    study = optuna.create_study(direction='maximize', study_name="3 model size " + model_size, storage="sqlite:///YOLO.db", load_if_exists=True)
     
     # Run the optimization
     print(f"Starting Optuna hyperparameter tuning with {n_trials} trials")
@@ -167,13 +168,13 @@ def run_optuna_tuning(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Optuna-based Hyperparameter Tuning for YOLOv8')
-    parser.add_argument('--data', type=str, default= "data/age_dataset/data.yaml" ,
+    parser.add_argument('--data', type=str, default= "data/age_dataset_test2/data.yaml" ,
                         help='Path to data.yaml file')
     parser.add_argument('--model-size', type=str, default='n', choices=['n', 's', 'm', 'l', 'x'],
                         help='YOLOv8 model size (n, s, m, l, x) (default: n)')
     parser.add_argument('--n-trials', type=int, default=40,
                         help='Number of Optuna trials (default: 40)')
-    parser.add_argument('--epochs-per-trial', type=int, default=40,
+    parser.add_argument('--epochs-per-trial', type=int, default=30,
                         help='Number of epochs to train in each trial (default: 10)')
     parser.add_argument('--device', type=str, default='0',
                         help='Device to run on (cpu, 0, 0,1, etc.) (default: 0)')
