@@ -1,0 +1,31 @@
+name: yoloenv
+channels:
+  - anaconda
+  - conda-forge
+  - https://repo.anaconda.com/pkgs/main
+  - https://repo.anaconda.com/pkgs/r
+  - https://repo.anaconda.com/pkgs/msys2
+dependencies:
+  - python=3.10
+  - ipykernel
+  - ipywidgets
+  - numpy
+  - pandas
+  - matplotlib
+  - tqdm
+  - pillow
+  - requests
+  - pyyaml
+  - scikit-image
+  - scipy
+  - seaborn
+  - ffmpeg
+  - optuna
+  - cudatoolkit=11.8
+  - torchvision=0.17.2
+  - torchaudio=2.2.2
+  - pip
+  - optuna-dashboard
+  - nbformat
+  - nbconvert
+prefix: C:\Users\jonal\miniconda3\envs\yoloenv
