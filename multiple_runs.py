@@ -108,7 +108,7 @@ def train_model(data_yaml, model_size, model_v, best_params, run_id, epochs=100,
         training_params['imgsz'] = 416
     
     # Explicitly set optimizer to AdamW
-    training_params['optimizer'] = 'Adam'
+    training_params['optimizer'] = 'AdamW'
     
     # Add the random seed to the training parameters
     training_params['seed'] = random_seed
@@ -116,14 +116,15 @@ def train_model(data_yaml, model_size, model_v, best_params, run_id, epochs=100,
 
     training_params['val'] = False
     training_params['deterministic'] = False
- 
+
+    training_params['batch'] = 32
     
     # Train with the best parameters
     print(f"\nRun {run_id}: Starting training for {epochs} epochs...")
     results = model.train(
         data=data_yaml,
         epochs=epochs,
-        cache='disk',
+        #cache='disk',
         device=device,
         project=project,
         name=name,
